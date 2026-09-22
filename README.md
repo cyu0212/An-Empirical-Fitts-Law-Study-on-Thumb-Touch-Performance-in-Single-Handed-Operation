@@ -14,10 +14,14 @@ As smartphone screens grow larger (6+ inches), the thumb's comfortable reach—t
 * **Physical Touch Test:** Developed a web-based Fitts' Law app tested physically via single-handed interactions on an iPhone 13, replacing traditional mouse clicks to reflect real-world mobile use.
 * **Thumb Simulation:** Features a red "OK" button moving along the vertical axis, dynamically simulating the real-world extension and flexion of a user's thumb on a large screen.
 * **Dynamic Difficulty:** Systematically varies Target Distance (A) and Target Width (W) to generate varying Indices of Difficulty (ID), allowing precise measurement of thumb Movement Time across different ID levels.
+<img width="1891" height="866" alt="image" src="https://github.com/user-attachments/assets/40c6c096-3ffa-416e-a4b2-37408179ad4e" />
+<img width="1891" height="863" alt="image" src="https://github.com/user-attachments/assets/0e33f10c-9064-46f2-a598-297a0bece2b5" />
+<img width="1896" height="865" alt="image" src="https://github.com/user-attachments/assets/13c16545-1328-4b9a-97e6-dea941f0c565" />
 
 ## Experiment Video Link
 * **Screen recording:** [https://drive.google.com/file/d/1T7mOY-MxLFpjO7fnIWbvwXaGQVzi3oeR/view?usp=sharing](https://drive.google.com/file/d/1T7mOY-MxLFpjO7fnIWbvwXaGQVzi3oeR/view?usp=sharing)
 * **Operation video:** [https://drive.google.com/file/d/1vZjiTcE9ahewerFhKawIKs_F8eorzReN/view?usp=sharing](https://drive.google.com/file/d/1vZjiTcE9ahewerFhKawIKs_F8eorzReN/view?usp=sharing)
+https://github.com/user-attachments/assets/6fccb2ed-3eca-4998-905f-97a4ac9b0bc6
 
 ## Fitts' Law Formula
 MT = 384.44 + 44.64 * log2(A/W + 1)
