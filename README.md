@@ -24,8 +24,9 @@ As smartphone screens grow larger (6+ inches), the thumb's comfortable reach—t
 * **Operation video:** [https://drive.google.com/file/d/1vZjiTcE9ahewerFhKawIKs_F8eorzReN/view?usp=sharing](https://drive.google.com/file/d/1vZjiTcE9ahewerFhKawIKs_F8eorzReN/view?usp=sharing)
 
 
-
-https://github.com/user-attachments/assets/e68378b5-cf20-4e28-b172-93193c9f710d
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/e68378b5-cf20-4e28-b172-93193c9f710d" width="300" controls></video>
+</div>
 
 
 ## Fitts' Law Formula
