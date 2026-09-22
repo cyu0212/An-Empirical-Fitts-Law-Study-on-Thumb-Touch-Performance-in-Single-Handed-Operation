@@ -1,5 +1,5 @@
 # An Empirical Fitts' Law Study on Thumb Touch Performance in Single-Handed Operation
-**[點擊此處開啟 Fitts' Law 模擬器網頁](https://cyu0212.github.io/An-Empirical-Fitts-Law-Study-on-Thumb-Touch-Performance-in-Single-Handed-Operation/)**
+**[Click here to open the Fitts' Law simulator webpage](https://cyu0212.github.io/An-Empirical-Fitts-Law-Study-on-Thumb-Touch-Performance-in-Single-Handed-Operation/)**
 ## Scenario & Concept
 
 ### User & Context
