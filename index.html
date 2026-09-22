@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fitts' Law in Smartphone Touchscreen Interaction</title>
+
+<!--
+  =====================================================================
+  Fitts' Law experiment: thumb-driven smartphone interaction
+  =====================================================================
+  Single-file HTML / CSS / vanilla JavaScript. No libraries, no backend.
+  Works from file:// and from GitHub Pages.
+
+  Independent variables : A (target distance), W (target width)
+  Dependent variable    : MT (movement time, ms)
+  Model                 : ID = log2(A / W + 1)      (Shannon formulation)
+                          MT = a + b * ID           (a, b estimated later)
+
+  Design decisions worth knowing (also repeated in the on-page notes):
+   - All geometry lives in the PHONE SCREEN coordinate system
+     (390 x 844 CSS px, origin = top-left of the white screen).
+     The phone is never resized or scaled.
+   - Trial 0 is a START button. Clicking it is NOT a trial; it only defines
+     the origin of trial 1, so EVERY recorded trial has a valid previous
+     target and therefore a valid, measured A. Nothing has to be excluded.
+   - Targets are full-width horizontal bars (list-button style), so the only
+     movement axis is vertical. W is the bar's height; its width always spans
+     the screen's safe area, matching the reference button-list image.
+   - MT runs from the previous successful selection to the current
+     successful selection, taken with performance.now(). Miss-clicks are
+     counted but never end a trial.
+  =====================================================================
+-->
+
+<style>
+  :root {
+    --bg: #e4e9ef;
+    --panel: #f8fafc;
+    --ink: #18212b;
+    --muted: #566373;
+    --line: #cbd4de;
+    --accent: #244a6b;
+    --accent-ink: #ffffff;
+    --target: #e53935;
+    --target-trial: #c2410c;
+    --phone-w: 414px;   /* 390 screen + 2 x 12 bezel */
+    --phone-h: 868px;   /* 844 screen + 2 x 12 bezel */
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    color: var(--ink);
+    background-color: var(--bg);
+    /* faint dot grid: a nod to measurement paper */
+    background-image: radial-gradient(rgba(36, 74, 107, .16) 1px, transparent 1.4px);
+    background-size: 18px 18px;
+    font: 16px/1.55 "Avenir Next", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  .page { max-width: 980px; margin: 0 auto; padding: 28px 20px 72px; }
+
+  /* ---------- header ---------- */
+  .hero { text-align: center; margin-bottom: 22px; }
+  .hero h1 {
+    margin: 0 0 10px;
+    font-size: clamp(24px, 3.4vw, 34px);
+    line-height: 1.15;
+    font-weight: 750;
+    letter-spacing: -0.02em;
+  }
+  .hero p { margin: 2px 0; color: var(--muted); font-size: 15.5px; }
+  .hero p strong { color: var(--ink); font-weight: 650; }
+
+  /* ---------- phone simulator (iPhone 15 Plus-style frame) ---------- */
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  /* The phone keeps its fixed 390 x 844 screen coordinate system. On small screens
+     (phones) it is only scaled visually, by --k, so the whole device fits in view. */
+  .phone-scroll {
+    flex: none;
+    width: calc(var(--phone-w) * var(--k, 1));
+    height: calc(var(--phone-h) * var(--k, 1));
+    margin: 4px 0 10px;
+  }
+
+  .phone {
+    position: relative;
+    flex: none;
+    width: var(--phone-w);
+    height: var(--phone-h);
+    padding: 12px;
+    border-radius: 64px;
+    /* titanium-ish brushed frame, close to the iPhone 15 Plus finish */
+    background: linear-gradient(155deg, #4b4c4e 0%, #232426 45%, #3a3b3d 100%);
+    box-shadow:
+      0 44px 76px -30px rgba(24, 33, 43, .55),
+      0 0 0 1px rgba(255, 255, 255, .08) inset,
+      0 0 0 2px #101112;
+    scroll-margin-top: 14px;
+    transform: scale(var(--k, 1));
+    transform-origin: top left;
+  }
+  /* action button, volume buttons, power button: purely decorative, generic */
+  .phone::before, .phone::after {
+    content: ""; position: absolute; width: 3px; border-radius: 2px; background: #1b1c1e;
+  }
+  .phone::before { left: -3px; top: 118px; height: 78px; box-shadow: 0 100px 0 #1b1c1e; }
+  .phone::after  { right: -3px; top: 200px; height: 108px; }
+
+  .screen {
+    position: relative;
+    width: 390px;              /* FIXED experimental coordinate system */
+    height: 844px;
+    border-radius: 54px;
+    background: #ffffff;
+    overflow: hidden;
+    cursor: default;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: none;
+  }
+
+  .statusbar {
+    position: absolute; left: 0; right: 0; top: 0; height: 44px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 30px 0 32px;
+    font-size: 15px; font-weight: 650; color: #14171b;
+    pointer-events: none; z-index: 3;
+  }
+  .statusbar .icons { display: flex; align-items: center; gap: 6px; }
+  .island {
+    position: absolute; left: 50%; top: 11px; width: 126px; height: 37px;
+    transform: translateX(-50%); border-radius: 20px; background: #000;
+    pointer-events: none; z-index: 3;
+  }
+  .home-indicator {
+    position: absolute; left: 50%; bottom: 8px; width: 134px; height: 5px;
+    transform: translateX(-50%); border-radius: 3px; background: #14171b;
+    pointer-events: none; z-index: 3;
+  }
+
+  /* layer that holds the current target (and the ghost of the previous one) */
+  .layer { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+
+  /* Flat button. No shadow and no border so the rendered size is exactly W.
+     .is-start (the red START button) and .is-trial (the orange trial bars,
+     styled after the reference list-of-buttons image) use different colors. */
+  .target {
+    position: absolute;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 14px;
+    color: #fff;
+    font-weight: 750; font-size: 14px; letter-spacing: .02em;
+    white-space: nowrap; overflow: hidden;
+  }
+  .target.is-start { background: var(--target); }
+  .target.is-trial { background: var(--target-trial); }
+  /* Faint outline of where the previous target was: shows where A starts. Not clickable. */
+  .ghost {
+    position: absolute;
+    border-radius: 14px;
+    border: 2px dashed rgba(194, 65, 12, .35);
+    background: transparent;
+  }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 44px; text-align: center; background: #fff; z-index: 2;
+  }
+  .overlay h2, .instruction h2 { margin: 0 0 12px; font-size: 21px; line-height: 1.25; letter-spacing: -.01em; }
+  .overlay p, .instruction p { margin: 0 0 10px; color: #3d4855; font-size: 16px; }
+  .overlay .hint, .instruction .hint { color: #6b7684; font-size: 14px; }
+
+  /* Instruction shown after "Start Experiment" is pressed. It sits above the red
+     START button and never blocks clicks. */
+  .instruction {
+    position: absolute; left: 0; right: 0; top: 120px;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 0 40px; text-align: center; z-index: 2; pointer-events: none;
+  }
+  .instruction .sample {
+    width: 156px; height: 76px; margin: 0 0 26px; border-radius: 20px;
+    background: var(--target-trial); color: #fff; font-weight: 750; font-size: 24px; letter-spacing: .02em;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Start Experiment button in the middle of the phone screen */
+  .btn.big { padding: 18px 34px; font-size: 19px; border-radius: 16px; }
+
+  /* ---------- controls under the phone ---------- */
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .btn {
+    appearance: none; cursor: pointer;
+    padding: 11px 22px; border-radius: 10px;
+    border: 1.5px solid var(--accent); background: transparent; color: var(--accent);
+    font: inherit; font-weight: 650;
+    transition: background-color .15s, color .15s, transform .05s;
+  }
+  .btn:hover { background: rgba(36, 74, 107, .09); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.primary:hover { background: #1b3a55; }
+  .btn:focus-visible, .seed input:focus-visible, summary:focus-visible {
+    outline: 3px solid #f0b429; outline-offset: 2px;
+  }
+
+  .statusline { min-height: 24px; color: var(--muted); font-size: 15px; text-align: center; }
+  .progress { width: 260px; height: 5px; border-radius: 3px; background: #c9d2dc; overflow: hidden; }
+  .progress span { display: block; height: 100%; width: 0; background: var(--accent); }
+  .seed { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .seed input {
+    width: 130px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; font: inherit; color: var(--ink);
+  }
+
+  /* ---------- results ---------- */
+  .results { margin-top: 44px; }
+  .results h2 { margin: 34px 0 12px; font-size: 22px; letter-spacing: -.01em; }
+  .results h2:first-child { margin-top: 0; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card .k { color: var(--muted); font-size: 13.5px; }
+  .card .v { margin-top: 2px; font-size: 26px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .card .u { margin-left: 4px; color: var(--muted); font-size: 14px; font-weight: 500; letter-spacing: 0; }
+
+  .model {
+    margin-top: 14px; padding: 16px 20px;
+    background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--accent);
+    border-radius: 12px;
+  }
+  .model .eq { margin: 0 0 4px; font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .model p { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+  .model .preview { color: var(--ink); }
+
+  .tablewrap {
+    max-height: 460px; overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 15px; }
+  thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: #dde4ec; text-align: right; font-weight: 650; font-size: 13.5px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  thead th small { display: block; font-weight: 500; color: var(--muted); }
+  tbody td { padding: 8px 14px; text-align: right; border-bottom: 1px solid #e4e9ef; }
+  tbody tr:nth-child(even) { background: #f0f4f8; }
+  th:first-child, td:first-child { text-align: left; }
+  th:nth-last-child(2), td:nth-last-child(2) { text-align: center; }
+  td.dir { color: var(--muted); }
+
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+
+  details.notes {
+    margin-top: 28px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 4px 18px;
+  }
+  details.notes summary { cursor: pointer; padding: 12px 0; font-weight: 650; }
+  details.notes ul { margin: 0 0 14px; padding-left: 20px; color: #37424f; font-size: 15px; }
+  details.notes li { margin: 5px 0; max-width: 78ch; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn { transition: none; }
+  }
+</style>
+</head>
+
+<body>
+<main class="page">
+
+  <!-- ===================== Title and instructions ===================== -->
+  <header class="hero">
+    <h1>Fitts' Law in Smartphone Touchscreen Interaction</h1>
+    <p><strong>Scenario:</strong> thumb-driven interaction with smartphone interface buttons.</p>
+    <p><strong>Instruction:</strong> click the red button as quickly and accurately as possible.</p>
+  </header>
+
+  <!-- ===================== Smartphone simulator ===================== -->
+  <section class="stage" id="stage" aria-label="Experiment">
+    <div class="phone-scroll">
+      <div class="phone" id="phone">
+        <!-- The white screen: fixed 390 x 844 CSS px. All A / W / coordinates are relative to it. -->
+        <div class="screen" id="screen">
+
+          <div class="statusbar" aria-hidden="true">
+            <span>9:41</span>
+            <span class="icons">
+              <!-- signal -->
+              <svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+              <!-- wifi -->
+              <svg width="17" height="12" viewBox="0 0 17 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a10 10 0 0 1 14 0"/><path d="M4.2 7a6.2 6.2 0 0 1 8.6 0"/><circle cx="8.5" cy="10" r=".9" fill="currentColor"/></svg>
+              <!-- battery -->
+              <svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".45"/><rect x="2" y="2" width="18" height="9" rx="2" fill="currentColor"/><path d="M25 4.5v4c.8-.3 1.5-1.1 1.5-2s-.7-1.7-1.5-2z" fill="currentColor" opacity=".5"/></svg>
+            </span>
+          </div>
+          <div class="island" aria-hidden="true"></div>
+
+          <!-- Targets are drawn here by JavaScript -->
+          <div class="layer" id="layer"></div>
+
+          <!-- Instruction: appears only after "Start Experiment" is pressed -->
+          <div class="instruction" id="instructionBox" hidden>
+            <div class="sample" aria-hidden="true">OK</div>
+            <h2>Click the red button as quickly and accurately as possible.</h2>
+            <p>The next button will appear at a different location and may have a different size.</p>
+            <p class="hint">Click the red START button to begin.</p>
+          </div>
+
+          <!-- Shown before the experiment starts: only the Start Experiment button, centered -->
+          <div class="overlay" id="introOverlay">
+            <button class="btn primary big" id="btnStart" type="button">Start Experiment</button>
+          </div>
+
+          <!-- Shown when all trials are finished -->
+          <div class="overlay" id="doneOverlay" hidden>
+            <h2>All trials completed.</h2>
+            <p>Your results are below the phone.</p>
+          </div>
+
+          <div class="home-indicator" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn" id="btnAbort" type="button" hidden>Restart Experiment</button>
+    </div>
+    <div class="progress" aria-hidden="true"><span id="progressFill"></span></div>
+    <div class="statusline" id="statusLine" role="status" aria-live="polite"></div>
+    <label class="seed">Random seed (optional, repeats the same trial order)
+      <input id="seedInput" type="text" inputmode="numeric" placeholder="random" autocomplete="off">
+    </label>
+  </section>
+
+  <!-- ===================== Results (shown after the last trial) ===================== -->
+  <section class="results" id="results" hidden aria-label="Results">
+    <h2>Experiment summary</h2>
+    <div class="cards" id="summaryCards"></div>
+
+    <div class="model">
+      <p class="eq">ID = log<sub>2</sub>(A / W + 1)</p>
+      <p class="eq">MT = a + b × ID</p>
+      <p>The constants a and b are not preset. Estimate them from the exported CSV with a linear regression of MT (Y) on ID (X).</p>
+      <p class="preview" id="regressionPreview"></p>
+    </div>
+
+    <h2>Trial data table</h2>
+    <div class="tablewrap">
+      <table id="trialTable">
+        <thead>
+          <tr>
+            <th>Trial</th>
+            <th>A<small>distance (pixels)</small></th>
+            <th>W<small>width (pixels)</small></th>
+            <th>ID<small>index of difficulty (bits)</small></th>
+            <th>MT<small>movement time (milliseconds)</small></th>
+            <th>Direction</th>
+            <th>Misses</th>
+          </tr>
+        </thead>
+        <tbody id="trialBody"></tbody>
+      </table>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="btnCsv" type="button">Download CSV</button>
+      <button class="btn" id="btnRestart" type="button">Restart Experiment</button>
+    </div>
+
+    <details class="notes">
+      <summary>How the measurements were made</summary>
+      <ul>
+        <li>All coordinates are in the coordinate system of the phone screen (390 × 844 CSS pixels, origin at the top-left corner of the white screen). The phone is never resized during the experiment.</li>
+        <li>The red START button is not a trial. Clicking it only sets the origin for trial 1, so every recorded trial has a real previous target and no trial had to be excluded.</li>
+        <li>A is the distance between the center of the previous target and the center of the current target, calculated from the rendered target rectangles. The CSV holds this measured value, plus the requested value in RequestedA.</li>
+        <li>Targets are full-width horizontal bars, so the only movement direction is vertical. W is the bar's height (the only dimension that moves); its width always spans the screen's safe area.</li>
+        <li>MT runs from the previous successful selection to the current successful selection, measured with performance.now(). Targets are selected on mouse press.</li>
+        <li>Clicks outside the target never end a trial. They are counted in Misses, and their time stays inside MT. Presses within 150 ms of a successful selection are ignored so a double-click cannot register.</li>
+        <li>Each target lies fully inside the safe area of the screen, kept away from the top and bottom edges of the screen. If a requested A could not fit, the closest valid position is used and the measured A is recorded. Compare A with RequestedA in the CSV to check that this never happened.</li>
+        <li>Order: 3 blocks, each containing all 25 combinations of A and W in random order. The order is generated from the seed shown in the Seed column, so it can be repeated.</li>
+      </ul>
+    </details>
+  </section>
+
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ====================================================================
+   * 1. CONFIGURATION
+   * ==================================================================== */
+  const CFG = {
+    SCREEN_W: 390,
+    SCREEN_H: 844,
+
+    // Region where a target may be placed (screen coordinates). It keeps targets
+    // kept away from the top (64 px) and bottom (54 px) edges of the screen.
+    SAFE: { left: 14, right: 376, top: 64, bottom: 790 },
+
+    A_LEVELS: [100, 150, 200, 250, 300],// requested target distances (px)
+    W_LEVELS: [30, 45, 60, 75, 90],     // target widths (px)
+    REPETITIONS: 3,                     // 5 x 5 x 3 = 75 trials
+
+    // START button: origin for trial 1. Not a recorded trial.
+    START: { cx: 195, cy: 660, w: 132, h: 56 },
+
+    MIN_INTERVAL_MS: 150                // presses this soon after a hit are ignored (double-click guard)
+  };
+
+  // Targets are full-width horizontal bars (list-button style), so the only
+  // direction that makes visual sense is vertical; axis 'V' = vertical.
+  const DIRECTIONS = [
+    { name: 'up',   axis: 'V', dx: 0, dy: -1 },
+    { name: 'down', axis: 'V', dx: 0, dy:  1 }
+  ];
+
+  /* ====================================================================
+   * 2. DOM REFERENCES AND STATE
+   * ==================================================================== */
+  const $ = (id) => document.getElementById(id);
+  const screenEl = $('screen'), layer = $('layer'), phoneEl = $('phone');
+  const introOverlay = $('introOverlay'), doneOverlay = $('doneOverlay');
+  const instructionBox = $('instructionBox');
+  const btnStart = $('btnStart'), btnAbort = $('btnAbort');
+  const btnCsv = $('btnCsv'), btnRestart = $('btnRestart');
+  const statusLine = $('statusLine'), progressFill = $('progressFill');
+  const seedInput = $('seedInput'), resultsEl = $('results');
+
+  const TOTAL_TRIALS = CFG.A_LEVELS.length * CFG.W_LEVELS.length * CFG.REPETITIONS;
+
+  const state = {
+    phase: 'idle',        // 'idle' | 'running' | 'done'
+    seed: 0,
+    rng: Math.random,
+    conditions: [],       // planned A/W condition for every trial
+    index: -1,            // index of the trial currently displayed (-1 = START button)
+    prevRect: null,       // measured rectangle of the previous target
+    current: null,        // description of the target currently shown
+    t0: 0,                // performance.now() of the previous successful selection
+    lastHit: 0,           // performance.now() of the last successful selection
+    misses: 0,            // miss-clicks during the current trial
+    results: []           // one record per completed trial
+  };
+
+  /* ====================================================================
+   * 3. SMALL HELPERS
+   * ==================================================================== */
+
+  // Deterministic PRNG (mulberry32) so a given seed reproduces the same experiment.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Fisher-Yates shuffle using the seeded generator.
+  function shuffle(arr, rng) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const round = (v, d) => { const f = 10 ** d; return Math.round(v * f) / f; };
+  const trim = (v) => String(round(v, 2));                 // 150 -> "150", 22.5 -> "22.5"
+  const fixed = (v, d) => v.toFixed(d);
+
+  function newSeed() {
+    if (window.crypto && crypto.getRandomValues) {
+      return crypto.getRandomValues(new Uint32Array(1))[0];
+    }
+    return Math.floor(Math.random() * 4294967296) >>> 0;
+  }
+
+  /* ====================================================================
+   * 4. GENERATING A / W CONDITIONS
+   *    3 blocks x (5 A levels x 5 W levels), each block shuffled separately.
+   *    Every condition therefore appears exactly 3 times, once per block.
+   * ==================================================================== */
+  function generateConditions(rng) {
+    const all = [];
+    for (let block = 1; block <= CFG.REPETITIONS; block++) {
+      const list = [];
+      for (const A of CFG.A_LEVELS) {
+        for (const W of CFG.W_LEVELS) list.push({ A, W, block });
+      }
+      shuffle(list, rng);
+      all.push(...list);
+    }
+    return all;
+  }
+
+  /* ====================================================================
+   * 5. POSITIONING TARGETS
+   *    Movement is along one axis, so the requested A is reproduced exactly
+   *    whenever the target fits. Positions are computed in screen coordinates.
+   * ==================================================================== */
+  function sizeFor(axis, W) {
+    // Full-width list-style bar: width always spans the safe area, height = W
+    // (the only moving dimension, since the only direction is vertical).
+    return { w: CFG.SAFE.right - CFG.SAFE.left, h: W };
+  }
+
+  function fitsInSafeArea(cx, cy, w, h) {
+    const S = CFG.SAFE, e = 1e-6;
+    return cx - w / 2 >= S.left - e && cx + w / 2 <= S.right + e &&
+           cy - h / 2 >= S.top - e  && cy + h / 2 <= S.bottom + e;
+  }
+
+  // Choose where the next target goes, given the previous target's measured center.
+  function choosePlacement(prev, cond, rng) {
+    const S = CFG.SAFE;
+    const options = [];
+
+    for (const d of DIRECTIONS) {
+      const { w, h } = sizeFor(d.axis, cond.W);
+      const cx = prev.cx + d.dx * cond.A;
+      const cy = prev.cy + d.dy * cond.A;
+      if (fitsInSafeArea(cx, cy, w, h)) {
+        options.push({ cx, cy, w, h, axis: d.axis, dir: d.name, clamped: false });
+      }
+    }
+    if (options.length) return options[Math.floor(rng() * options.length)];
+
+    // Fallback (not expected with these levels): clamp into the safe area and keep
+    // the direction whose resulting distance is closest to the requested A.
+    // The actual A is always measured and recorded afterwards.
+    let best = null;
+    for (const d of DIRECTIONS) {
+      const { w, h } = sizeFor(d.axis, cond.W);
+      const cx = clamp(prev.cx + d.dx * cond.A, S.left + w / 2, S.right - w / 2);
+      const cy = clamp(prev.cy + d.dy * cond.A, S.top + h / 2, S.bottom - h / 2);
+      const err = Math.abs(Math.hypot(cx - prev.cx, cy - prev.cy) - cond.A);
+      if (!best || err < best.err) best = { cx, cy, w, h, axis: d.axis, dir: d.name, clamped: true, err };
+    }
+    return best;
+  }
+
+  /* ====================================================================
+   * 6. DRAWING AND MEASURING
+   *    A and W are measured from the rendered rectangles, not from the
+   *    numbers used to create them.
+   * ==================================================================== */
+  function drawTarget(p, label, ghostRect, kind) {
+    const nodes = [];
+    if (ghostRect) {
+      const g = document.createElement('div');
+      g.className = 'ghost';
+      g.style.cssText = `left:${ghostRect.x}px;top:${ghostRect.y}px;width:${ghostRect.w}px;height:${ghostRect.h}px`;
+      nodes.push(g);
+    }
+    const el = document.createElement('div');
+    el.className = `target is-${kind}`;
+    el.textContent = label;
+    el.style.cssText = `left:${p.cx - p.w / 2}px;top:${p.cy - p.h / 2}px;width:${p.w}px;height:${p.h}px`;
+    nodes.push(el);
+    layer.replaceChildren(...nodes);
+    return el;
+  }
+
+  // Rectangle of an element in screen coordinates (origin = top-left of the white screen).
+  // Browser measurements are divided by the phone's visual scale k (1 on desktop), so
+  // A, W and target coordinates always live in the fixed 390 x 844 screen system.
+  function measureRect(el) {
+    const r = el.getBoundingClientRect();
+    const s = screenEl.getBoundingClientRect();
+    const k = s.width / CFG.SCREEN_W || 1;
+    const x = round((r.left - s.left) / k, 3), y = round((r.top - s.top) / k, 3);
+    const w = round(r.width / k, 3), h = round(r.height / k, 3);
+    return { x, y, w, h, cx: round(x + w / 2, 3), cy: round(y + h / 2, 3) };
+  }
+
+  // On a phone, scale the whole device down so it is fully visible on one screen.
+  // Only the picture is scaled; coordinates stay in the 390 x 844 system. It is not
+  // changed while an experiment is running, so trials are never resized.
+  function fitPhone() {
+    if (state.phase === 'running') return;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = Math.min(window.innerHeight, (window.screen && window.screen.height ? window.screen.height - 160 : Infinity));
+    const small = window.matchMedia('(pointer: coarse)').matches || vw <= 600;
+    let k = 1;
+    if (small) {
+      k = Math.min(1, (vw - 16) / 414, (vh - 40) / 868);
+      k = Math.max(0.3, round(k, 4));
+    }
+    document.documentElement.style.setProperty('--k', String(k));
+  }
+
+  /* ====================================================================
+   * 7. EXPERIMENT FLOW
+   * ==================================================================== */
+  function startExperiment() {
+    fitPhone();   // apply the on-screen scale once, before trials begin (never during them)
+
+    // Seed: user supplied (reproducible) or freshly generated.
+    const raw = seedInput.value.trim();
+    state.seed = (raw !== '' && /^\d+$/.test(raw)) ? (Number(raw) >>> 0) : newSeed();
+    state.rng = mulberry32(state.seed);
+    state.conditions = generateConditions(state.rng);
+    state.results = [];
+    state.index = -1;
+    state.misses = 0;
+    state.phase = 'running';
+
+    introOverlay.hidden = true;
+    doneOverlay.hidden = true;
+    resultsEl.hidden = true;
+    btnStart.hidden = true;
+    btnAbort.hidden = false;
+    btnStart.blur();
+
+    // The instruction appears only now, above the red START button.
+    instructionBox.hidden = false;
+
+    // START button: defines the origin of trial 1. It is not a trial.
+    const s = CFG.START;
+    const el = drawTarget({ cx: s.cx, cy: s.cy, w: s.w, h: s.h }, 'START', null, 'start');
+    state.current = { isStart: true, el, rect: measureRect(el) };
+
+    updateStatus();
+    phoneEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Show trial `index`. `tStart` is the moment of the previous successful selection.
+  function presentTrial(index, tStart) {
+    const cond = state.conditions[index];
+    const p = choosePlacement(state.prevRect, cond, state.rng);
+    const el = drawTarget(p, 'OK', state.prevRect, 'trial');
+
+    state.current = {
+      isStart: false,
+      index,
+      cond,
+      el,
+      rect: measureRect(el),          // measured target rectangle (center gives TargetX / TargetY)
+      prevRect: state.prevRect,       // measured previous target (origin of A)
+      axis: p.axis,
+      dir: p.dir
+    };
+    state.t0 = tStart;                // MT starts at the previous successful selection
+    state.misses = 0;
+    updateStatus();
+  }
+
+  function onPointerDown(e) {
+    if (state.phase !== 'running') return;
+    if (e.button !== 0) return;                 // primary button only
+    e.preventDefault();
+
+    const t = performance.now();
+    if (t - state.lastHit < CFG.MIN_INTERVAL_MS) return;   // double-click guard
+
+    // Pointer position in screen coordinates (independent of the browser window and of
+    // the visual scale used on small screens).
+    const s = screenEl.getBoundingClientRect();
+    const k = s.width / CFG.SCREEN_W || 1;
+    const px = (e.clientX - s.left) / k, py = (e.clientY - s.top) / k;
+    const cur = state.current;
+    const r = cur.rect;
+    const inside = px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+
+    if (!inside) {                              // miss: count it, never record a trial
+      if (!cur.isStart) state.misses++;
+      return;
+    }
+
+    state.lastHit = t;
+
+    // Hit on START: only sets the origin for trial 1.
+    if (cur.isStart) {
+      instructionBox.hidden = true;
+      state.prevRect = cur.rect;
+      state.index = 0;
+      presentTrial(0, t);
+      return;
+    }
+
+    // Hit on a trial target: record the trial.
+    recordTrial(cur, t);
+    state.prevRect = cur.rect;
+
+    if (cur.index + 1 >= state.conditions.length) {
+      finishExperiment();
+    } else {
+      state.index = cur.index + 1;
+      presentTrial(state.index, t);
+    }
+  }
+
+  /* ====================================================================
+   * 8. MEASURING A, W, MT AND CALCULATING ID; RECORDING THE TRIAL
+   * ==================================================================== */
+  function recordTrial(cur, tHit) {
+    const MT = tHit - state.t0;                                            // ms
+
+    // A: center-to-center distance between previous and current target (measured).
+    const A = Math.hypot(cur.rect.cx - cur.prevRect.cx, cur.rect.cy - cur.prevRect.cy);
+
+    // W: measured size of the current target along the movement axis.
+    const W = cur.axis === 'H' ? cur.rect.w : cur.rect.h;
+
+    // Shannon formulation, from the ACTUAL A and W.
+    const ID = Math.log2(A / W + 1);
+
+    state.results.push({
+      trial: cur.index + 1,
+      A, W, ID, MT,
+      targetX: cur.rect.cx,
+      targetY: cur.rect.cy,
+      timestamp: new Date().toISOString(),
+      requestedA: cur.cond.A,
+      requestedW: cur.cond.W,
+      direction: cur.dir,
+      misses: state.misses,
+      block: cur.cond.block,
+      seed: state.seed
+    });
+  }
+
+  function finishExperiment() {
+    state.phase = 'done';
+    layer.replaceChildren();
+    doneOverlay.hidden = false;
+    btnAbort.hidden = true;
+    updateStatus();
+    renderResults();
+    resultsEl.hidden = false;
+    resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /* ====================================================================
+   * 9. STATUS TEXT
+   * ==================================================================== */
+  function updateStatus() {
+    let done = 0, text = '';
+    if (state.phase === 'idle') {
+      text = `Ready. ${TOTAL_TRIALS} trials: ${CFG.A_LEVELS.length} distances × ${CFG.W_LEVELS.length} widths × ${CFG.REPETITIONS} repetitions.`;
+    } else if (state.phase === 'running') {
+      if (state.current && state.current.isStart) {
+        text = 'Click the red START button to begin trial 1.';
+      } else {
+        done = state.index;
+        text = `Trial ${state.index + 1} of ${TOTAL_TRIALS}`;
+      }
+    } else {
+      done = TOTAL_TRIALS;
+      text = `Finished. ${TOTAL_TRIALS} trials recorded (seed ${state.seed}).`;
+    }
+    statusLine.textContent = text;
+    progressFill.style.width = `${(done / TOTAL_TRIALS) * 100}%`;
+  }
+
+  /* ====================================================================
+   * 10. RESULTS: SUMMARY, REGRESSION PREVIEW, TRIAL DATA TABLE
+   * ==================================================================== */
+  function renderResults() {
+    const R = state.results;
+    const n = R.length;
+    const mts = R.map(r => r.MT), ids = R.map(r => r.ID);
+    const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+    const misses = R.reduce((s, r) => s + r.misses, 0);
+
+    // Summary cards
+    const cards = [
+      ['Total trials', String(n), ''],
+      ['Mean movement time', fixed(mean(mts), 1), 'ms'],
+      ['Minimum movement time', fixed(Math.min(...mts), 1), 'ms'],
+      ['Maximum movement time', fixed(Math.max(...mts), 1), 'ms'],
+      ['Mean index of difficulty', fixed(mean(ids), 3), 'bits'],
+      ['Miss-clicks', String(misses), '']
+    ];
+    $('summaryCards').innerHTML = cards.map(([k, v, u]) =>
+      `<div class="card"><div class="k">${k}</div><div class="v">${v}<span class="u">${u}</span></div></div>`
+    ).join('');
+
+    // Least-squares fit of MT on ID, computed only from this session's data.
+    const mx = mean(ids), my = mean(mts);
+    let sxx = 0, sxy = 0, syy = 0;
+    for (let i = 0; i < n; i++) {
+      sxx += (ids[i] - mx) ** 2;
+      sxy += (ids[i] - mx) * (mts[i] - my);
+      syy += (mts[i] - my) ** 2;
+    }
+    const prev = $('regressionPreview');
+    if (n >= 3 && sxx > 0) {
+      const b = sxy / sxx, a = my - b * mx;
+      const r2 = syy > 0 ? (sxy * sxy) / (sxx * syy) : 0;
+      prev.textContent = `Preview from this session only (least squares, n = ${n}): a = ${fixed(a, 1)} ms, b = ${fixed(b, 1)} ms/bit, R² = ${fixed(r2, 3)}.`;
+    } else {
+      prev.textContent = '';
+    }
+
+    // Trial data table
+    $('trialBody').innerHTML = R.map(r =>
+      `<tr>` +
+      `<td>${r.trial}</td>` +
+      `<td>${trim(r.A)}</td>` +
+      `<td>${trim(r.W)}</td>` +
+      `<td>${fixed(r.ID, 3)}</td>` +
+      `<td>${fixed(r.MT, 1)}</td>` +
+      `<td class="dir">${r.direction}</td>` +
+      `<td>${r.misses}</td>` +
+      `</tr>`
+    ).join('');
+  }
+
+  /* ====================================================================
+   * 11. CSV EXPORT (Blob + temporary download link)
+   * ==================================================================== */
+  function buildCsv() {
+    const header = ['Trial', 'A', 'W', 'ID', 'MT', 'TargetX', 'TargetY', 'Timestamp',
+                    'RequestedA', 'RequestedW', 'Direction', 'Misses', 'Block', 'Seed'];
+    const rows = state.results.map(r => [
+      r.trial, round(r.A, 3), round(r.W, 3), fixed(r.ID, 4), fixed(r.MT, 1),
+      round(r.targetX, 2), round(r.targetY, 2), r.timestamp,
+      r.requestedA, r.requestedW, r.direction, r.misses, r.block, r.seed
+    ]);
+    return [header, ...rows].map(row => row.join(',')).join('\r\n') + '\r\n';
+  }
+
+  async function downloadCsv() {
+    if (!state.results.length) return;
+    const csv = buildCsv();
+    const d = new Date(), p = (v) => String(v).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    const filename = `fitts-law-smartphone-${stamp}.csv`;
+
+    // Hosted as an artifact: script-started downloads are blocked, so the viewer's
+    // save prompt (the "downloads" capability) is used instead.
+    if (window.claude && typeof window.claude.use === 'function') {
+      let dl = null;
+      try { dl = await window.claude.use('downloads'); } catch (_) { dl = null; }
+      if (!dl) { btnCsv.hidden = true; return; }
+      try { await dl.save({ filename, data: csv }); }
+      catch (_) { /* declined or rate limited: the viewer can press the button again */ }
+      return;
+    }
+
+    // Opened locally or on GitHub Pages: Blob + temporary download link.
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /* ====================================================================
+   * 12. RESTARTING THE EXPERIMENT
+   *     Returns to the instruction screen. Press Start Experiment to begin again.
+   * ==================================================================== */
+  function restartExperiment() {
+    state.phase = 'idle';
+    state.index = -1;
+    state.prevRect = null;
+    state.current = null;
+    state.results = [];
+    state.misses = 0;
+    state.lastHit = 0;
+
+    layer.replaceChildren();
+    doneOverlay.hidden = true;
+    instructionBox.hidden = true;
+    introOverlay.hidden = false;
+    resultsEl.hidden = true;
+    $('trialBody').innerHTML = '';
+    btnAbort.hidden = true;
+    btnStart.hidden = false;
+
+    fitPhone();
+    updateStatus();
+    phoneEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /* ====================================================================
+   * 13. EVENT WIRING
+   * ==================================================================== */
+  screenEl.addEventListener('pointerdown', onPointerDown);
+  // No accidental selection, dragging or context menu while clicking targets.
+  ['contextmenu', 'dragstart', 'selectstart'].forEach(ev =>
+    screenEl.addEventListener(ev, (e) => e.preventDefault())
+  );
+
+  btnStart.addEventListener('click', startExperiment);
+  btnAbort.addEventListener('click', restartExperiment);
+  btnRestart.addEventListener('click', restartExperiment);
+  btnCsv.addEventListener('click', downloadCsv);
+
+  fitPhone();
+  window.addEventListener('resize', fitPhone);              // ignored while a run is in progress
+  window.addEventListener('orientationchange', fitPhone);
+  updateStatus();
+})();
+</script>
+</body>
+</html>
