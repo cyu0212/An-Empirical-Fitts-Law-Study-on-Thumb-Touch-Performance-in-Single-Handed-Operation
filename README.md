@@ -16,6 +16,7 @@ As smartphone screens grow larger (6+ inches), the thumb's comfortable reach—t
 * **Dynamic Difficulty:** Systematically varies Target Distance (A) and Target Width (W) to generate varying Indices of Difficulty (ID), allowing precise measurement of thumb Movement Time across different ID levels.
 <img width="1891" height="866" alt="image" src="https://github.com/user-attachments/assets/40c6c096-3ffa-416e-a4b2-37408179ad4e" />
 <img width="1891" height="863" alt="image" src="https://github.com/user-attachments/assets/0e33f10c-9064-46f2-a598-297a0bece2b5" />
+<img width="1891" height="863" alt="image" src="https://github.com/user-attachments/assets/a8e0b63e-25e3-4827-83ae-b17a85e36223" />
 <img width="1896" height="865" alt="image" src="https://github.com/user-attachments/assets/13c16545-1328-4b9a-97e6-dea941f0c565" />
 
 ## Experiment Video Link
